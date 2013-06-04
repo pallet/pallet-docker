@@ -13,7 +13,7 @@ compute services talking to a single docker host."
    [pallet.actions :refer [as-action assoc-settings exec-script
                            with-action-values]]
    [pallet.crate :refer [defplan get-settings update-settings]]
-   [pallet.script.lib :refer [cat heredoc with-lock]]))
+   [pallet.script.lib :refer [cat heredoc]]))
 
 (def settings
   {:tagfile "/var/lib/docker/pallet-tags"
@@ -24,7 +24,6 @@ compute services talking to a single docker host."
   []
   (debugf "read-tags")
   (let [s (exec-script
-           ;; with-lock (:lockfile settings) {:exclusive true}
            (if-not (file-exists? ~(:tagfile settings))
              (pipe (println "'{}'") ("cat" ">" ~(:tagfile settings))))
            (cat ~(:tagfile settings)))
@@ -49,7 +48,6 @@ compute services talking to a single docker host."
   (let [tags (get-settings :docker/tags)]
     (debugf "write-tags %s" tags)
     (exec-script
-     ;; with-lock ~(:lockfile settings) {:exclusive true}
      (heredoc ~(:tagfile settings) ~(pr-str tags) {:literal true}))))
 
 (defn get-tag
