@@ -205,6 +205,7 @@ http://docker.io"
 
   (destroy-nodes-in-group
     [compute group-name]
+    (debugf "destroy-nodes-in-group %s" group-name)
     (let [nodes (compute/nodes compute)]
       (doseq [n nodes
               :when (= (name group-name) (name (node/group-name n)))]
@@ -304,6 +305,7 @@ http://docker.io"
 (defn- remove-node
   "Removes a compute node on docker."
   [compute-service host-node host-user node]
+  (debugf "remove-node %s" node)
   (let [{:keys [results]}
         (lift-nodes [{:node host-node}]
                     [(plan-fn (docker/kill (node/id node)))]
