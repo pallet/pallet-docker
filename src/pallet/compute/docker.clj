@@ -275,9 +275,11 @@ http://docker.io"
   We would like to bind mount the admin user so we have known credentials to
   login, but I think this is only available on the ubuntu template. Passing
   a ssh public key for the default user seems to be more supported."
-  [compute-service host-node host-user group-name image-id bootstrapped
+  [compute-service host-node host-user group-name image-id ports bootstrapped
    cmd options]
-  (let [options (merge {:detached true :port 22} options)
+  (let [options (merge {:detached true
+                        :port (or ports [22])}
+                       options)
         {:keys [results]}
         (lift-nodes [{:node host-node}]
                     [(plan-fn (docker/run image-id cmd options))]
@@ -297,6 +299,7 @@ http://docker.io"
                            compute-service host-node host-user
                            (:group-name group-spec)
                            (-> group-spec :image :image-id)
+                           (-> group-spec :network :inbound-ports)
                            (-> group-spec :image :bootstrapped)
                            cmd options)]]
          node)
