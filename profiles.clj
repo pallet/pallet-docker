@@ -1,4 +1,5 @@
-{:dev {:dependencies [[ch.qos.logback/logback-classic "1.0.9"]]
+{:dev {:dependencies [[ch.qos.logback/logback-classic "1.0.9"]
+                      [com.palletops/crates "0.1.1-SNAPSHOT"]]
        :checkout-deps-shares [:source-paths :test-paths :resource-paths
                               :compile-path]
        :plugins [[codox/codox.leiningen "0.6.4"]

@@ -3,6 +3,9 @@
     <encoder>
       <pattern>%d{HH:mm:ss.SSS} [%thread] %-5level %logger{36} - %msg%n</pattern>
     </encoder>
+    <filter class="ch.qos.logback.classic.filter.ThresholdFilter">
+      <level>INFO</level>
+    </filter>
   </appender>
 
   <appender name="COMPUTEFILE" class="ch.qos.logback.core.rolling.RollingFileAppender">
@@ -79,6 +82,7 @@
 
   <logger name="pallet.action-plan" level="DEBUG"/>
   <logger name="pallet.algo" level="INFO"/>
+  <logger name="pallet.compute.docker-test" level="DEBUG"/>
   <!-- <logger name="pallet.execute.default-executor" level="TRACE"/> -->
 
 </configuration>
