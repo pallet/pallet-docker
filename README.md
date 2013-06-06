@@ -68,4 +68,5 @@ Copyright 2013 Hugo Duncan.
 [docs]: http://palletops.com/doc "Pallet Documentation"
 [ml]: http://groups.google.com/group/pallet-clj "Pallet mailing list"
 [clojure]: http://clojure.org "Clojure"
+[clojars]: http://clojars.org/com.palletops/pallet-docker "Clojars"
 [docker]: http://docker.io/ "Docker"
