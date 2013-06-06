@@ -128,4 +128,5 @@
                  (let [docker (instantiate-provider
                                :docker :node (target-node))]
                    (remove-httpd docker)))}
+    :default-phases [:install :configure :test :shutdown]
     :roles #{:live-test :default}))
