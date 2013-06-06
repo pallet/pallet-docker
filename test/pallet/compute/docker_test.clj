@@ -51,8 +51,6 @@
       (pprint res)
       (throw (ex-info "Problem starting container"
                       {:phase-errors e})))
-    (clojure.tools.logging/infof "-container res %s" res)
-    (println "-container res %s" res)
     (let [node (:node (first (:targets res)))
           _ (assert node "No node reported from container")
           id (create-image docker-service node {:tag "pallet/docker-test"})]
