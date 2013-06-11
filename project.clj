@@ -1,4 +1,4 @@
-(defproject com.palletops/pallet-docker "0.1.0-SNAPSHOT"
+(defproject com.palletops/pallet-docker "0.1.0"
   :description "A provider for using Pallet with Docker."
   :url "http://github.com/pallet/docker-crate"
   :license {:name "Eclipse Public License"
