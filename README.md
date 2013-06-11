@@ -30,8 +30,8 @@ tool.
 ### lein project.clj
 
 ```clojure
-:dependencies [[com.palletops/pallet "0.8.0-SNAPSHOT"]
-               [com.palletops/pallet-docker "0.8.0-SNAPSHOT"]]
+:dependencies [[com.palletops/pallet "0.8.0-RC.1"]
+               [com.palletops/pallet-docker "0.1.0"]]
 ```
 
 ### maven pom.xml
@@ -41,12 +41,12 @@ tool.
   <dependency>
     <groupId>com.palletops</groupId>
     <artifactId>pallet</artifactId>
-    <version>0.8.0-SNAPSHOT</version>
+    <version>0.8.0-RC.1</version>
   </dependency>
   <dependency>
     <groupId>com.palletops</groupId>
     <artifactId>pallet-docker</artifactId>
-    <version>0.8.0-SNAPSHOT</version>
+    <version>0.1.0</version>
   </dependency>
 <dependencies>
 
@@ -68,4 +68,5 @@ Copyright 2013 Hugo Duncan.
 [docs]: http://palletops.com/doc "Pallet Documentation"
 [ml]: http://groups.google.com/group/pallet-clj "Pallet mailing list"
 [clojure]: http://clojure.org "Clojure"
-[docker]: http://docker.io/ DOCKER
+[clojars]: http://clojars.org/com.palletops/pallet-docker "Clojars"
+[docker]: http://docker.io/ "Docker"
