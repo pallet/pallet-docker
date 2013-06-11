@@ -1,0 +1,110 @@
+<html lang="en">
+  <head>
+    <title>Pallet-docker 0.1.0 API documentation</title>
+    <link href="css/default.css" type="text/css" rel="stylesheet" />
+    <link href="css/codox-md.css" type="text/css" rel="stylesheet" />
+    <link href="http://palletops.com" rel="project" />
+    <script type="text/javascript" src="js/jquery.min.js"></script>
+    <script type="text/javascript" src="js/page_effects.js"></script>
+  </head>
+  <body>
+    <header>
+    <div data-scrollspy="scrollspy" class="topbar">
+      <div class="topbar-inner">
+        <div class="container">
+          <a href="/" class="brand">Pallet</a>
+          <ul class="nav">
+            <li class=""><a href="/doc">Documentation</a></li>
+            <li class=""><a href="/news">News</a></li>
+            <li class=""><a href="/blog">Blog</a></li>
+            <li class=""><a href="https://github.com/pallet/pallet">Code</a></li>
+            <li class=""><a href="/services">Services</a></li>
+            <li class=""><a href="/support">Support</a></li>
+            <li class=""><a href="/contact">Contact</a></li>
+          </ul>
+          <form action="http://www.google.com/search" method="get" class="pull-right">
+            <input placeholder="Search" value="" maxlength="255" name="q" type="text" />
+            <input value="palletops.com" type="hidden" name="sitesearch" />
+          </form>
+        </div>
+      </div>
+    </div>
+
+      <div id="header">
+        <h1><a href="http://palletops.com"><span class="project-title">Pallet-docker 0.1.0 API documentation</span></a></h1>
+      </div>
+    </header>
+    <navigation>
+      <div id="namespaces" class="sidebar">
+        <h3>Namespaces</h3>
+        <ul class="ns-links">
+          <li class="ns-list"><a class="ns-link ns-name" href="pallet.compute.docker.html">pallet.compute.docker</a><a class="ns-link ns-name" href="pallet.compute.docker.protocols.html">pallet.compute.docker.protocols</a><a class="ns-link ns-name" href="pallet.compute.docker.tagfile.html">pallet.compute.docker.tagfile</a></li>
+        </ul>
+      </div>
+    </navigation>
+    <article>
+      <div id="content" class="namespace-index">
+        <h2 class="project-title">Pallet-docker 0.1.0 API documentation</h2>
+        <div class="doc"><p>A provider for using Pallet with Docker.</p>
+</div>
+        <div class="project-namespaces">
+          <div class="namespace">
+            <h3 href="pallet.compute.docker.html" class="ns-link"><a class="ns-link ns-name" href="pallet.compute.docker.html">pallet.compute.docker</a></h3>
+            <div class="doc"><p>The docker provider allows Pallet to use and configure Docker containers.</p>
+
+<p>For configuration we assume any image has an SSH server installed.  During
+configuration the SSH server is run as PID 1.  By default, pallet starts
+containers with the <code>/usr/sbin/sshd -D</code> command, which can be overridden in
+the <code>:init</code> key of the <code>:image</code>.</p>
+
+<p>The pallet/ubuntu image has openssh-server installed, and the /var/run/sshd
+directory created.  Password is pallet.</p>
+
+<p>Docker doesn't have support for setting any sort of per node metadata, so we
+have to maintain this in a file on the host node.</p>
+
+<h2>Links</h2>
+
+<p>http://docker.io</p>
+</div>
+            <div class="index ns-var-links">
+              <p>Public variables and functions:</p>
+              <ul>
+                <li class="ns-var-list"><a class="ns-var-link ns-var-name" href="pallet.compute.docker.html#var--%3EDockerNode">-&gt;DockerNode</a></li><li class="ns-var-list"><a class="ns-var-link ns-var-name" href="pallet.compute.docker.html#var--%3EDockerService">-&gt;DockerService</a></li><li class="ns-var-list"><a class="ns-var-link ns-var-name" href="pallet.compute.docker.html#var--%3ETagfileNodeTag">-&gt;TagfileNodeTag</a></li>
+              </ul>
+            </div>
+          </div><div class="namespace">
+            <h3 href="pallet.compute.docker.protocols.html" class="ns-link"><a class="ns-link ns-name" href="pallet.compute.docker.protocols.html">pallet.compute.docker.protocols</a></h3>
+            <div class="doc"><p>Internal protocols</p>
+</div>
+            <div class="index ns-var-links">
+              <p>Public variables and functions:</p>
+              <ul>
+                <li class="ns-var-list"><a class="ns-var-link ns-var-name" href="pallet.compute.docker.protocols.html#var-host-node">host-node</a></li><li class="ns-var-list"><a class="ns-var-link ns-var-name" href="pallet.compute.docker.protocols.html#var-host-user">host-user</a></li><li class="ns-var-list"><a class="ns-var-link ns-var-name" href="pallet.compute.docker.protocols.html#var-tag-cache">tag-cache</a></li>
+              </ul>
+            </div>
+          </div><div class="namespace">
+            <h3 href="pallet.compute.docker.tagfile.html" class="ns-link"><a class="ns-link ns-name" href="pallet.compute.docker.tagfile.html">pallet.compute.docker.tagfile</a></h3>
+            <div class="doc"><p>Manages a file on a docker host, containing tags for docker containers.</p>
+
+<p>The tag file is a clojure datastructure, that is a map from node id to a map
+from tag keywords to sting value.</p>
+
+<p>The tags are kept in the settings for the docker host node.</p>
+
+<p>Locking is taken care of at the node level, so there can be multiple docker
+compute services talking to a single docker host.</p>
+</div>
+            <div class="index ns-var-links">
+              <p>Public variables and functions:</p>
+              <ul>
+                <li class="ns-var-list"><a class="ns-var-link ns-var-name" href="pallet.compute.docker.tagfile.html#var-get-tag">get-tag</a></li><li class="ns-var-list"><a class="ns-var-link ns-var-name" href="pallet.compute.docker.tagfile.html#var-read-tags">read-tags</a></li><li class="ns-var-list"><a class="ns-var-link ns-var-name" href="pallet.compute.docker.tagfile.html#var-remove-tag">remove-tag</a></li><li class="ns-var-list"><a class="ns-var-link ns-var-name" href="pallet.compute.docker.tagfile.html#var-set-tag">set-tag</a></li><li class="ns-var-list"><a class="ns-var-link ns-var-name" href="pallet.compute.docker.tagfile.html#var-write-tags">write-tags</a></li>
+              </ul>
+            </div>
+          </div>
+        </div>
+      </div>
+    </article>
+  </body>
+
+</html>
