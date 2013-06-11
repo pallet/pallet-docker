@@ -3,7 +3,9 @@
        :checkout-deps-shares [:source-paths :test-paths :resource-paths
                               :compile-path]
        :plugins [[codox/codox.leiningen "0.6.4"]
-                 [lein-marginalia "0.7.1"]]}
+                 [lein-marginalia "0.7.1"]
+                 [lein-set-version "0.3.0"]
+                 [com.palletops/pallet-lein "0.8.0-SNAPSHOT"]]}
  :doc {:dependencies [[com.palletops/pallet-codox "0.1.0"]]
        :codox {:writer codox-md.writer/write-docs
                :output-dir "doc/0.1/api"
