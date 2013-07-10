@@ -91,7 +91,7 @@ http://docker.io"
   (terminated? [_]
     (not (-> inspect :State :Running)))
 
-  (id [_] (-> inspect :Id))
+  (id [_] (-> inspect :ID))
   (compute-service [_] service)
   pallet.node.NodePackager
   (packager [node]
