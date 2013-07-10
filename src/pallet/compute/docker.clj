@@ -75,11 +75,14 @@ http://docker.io"
     (-> inspect :Config :Hostname))
 
   (os-family
-    [_])
+    [node]
+    (:os-family ((.image_meta (node/compute-service node))
+                 (inspect :Image))))
 
   (os-version
-    [_]
-    )
+    [node]
+    (:os-version ((.image_meta (node/compute-service node))
+                  (inspect :Image))))
 
   (running?
     [_]
@@ -98,8 +101,17 @@ http://docker.io"
     nil)
   pallet.node.NodeImage
   (image-user [node]
-    {:username (let [u (-> inspect :Config :User)]
-                 (if (blank? u) "root" u))})
+    (debugf "image-user for %s" (inspect :Image))
+    (or
+     (select-keys
+      ((.image_meta (node/compute-service node))
+       (inspect :Image))
+      [:username :password :private-key :public-key
+       :private-key-path :public-key-path])
+     {:username (let [u (-> inspect :Config :User)]
+                  (if (blank? u)
+                    "root"
+                    u))}))
   pallet.node.NodeProxy
   (proxy [node]
       {:host (node/primary-ip (.host_node service))
@@ -155,7 +167,7 @@ http://docker.io"
 
 (deftype DockerService
     ;; host-node and host-user determine the node that is hosting the containers
-    [host-node host-user environment tag-provider tag-cache]
+    [host-node host-user environment tag-provider tag-cache image-meta]
 
   pallet.compute.docker.protocols/ServiceHost
   (host-node [_] host-node)
@@ -403,11 +415,12 @@ http://docker.io"
   ["docker"])
 
 (defn docker-service
-  [{:keys [node user environment tag-provider]
+  [{:keys [node user environment tag-provider image-meta]
     :or {user *admin-user*}
     :as options}]
   (let [tag-provider (atom tag-provider)
-        service (DockerService. node user environment tag-provider (atom nil))]
+        service (DockerService.
+                 node user environment tag-provider (atom nil) image-meta)]
     (when-not @tag-provider
       (reset! tag-provider (TagfileNodeTag. service)))
     service))
