@@ -315,7 +315,7 @@ http://docker.io"
                            (-> group-spec :image :bootstrapped)
                            cmd options)]]
          node)
-       (filter identity)))
+       (filterv identity)))
 
 (defn- remove-node
   "Removes a compute node on docker."
