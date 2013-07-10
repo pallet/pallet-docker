@@ -306,6 +306,7 @@ http://docker.io"
 
 (defn create-nodes
   [compute-service host-node host-user group-spec cmd options node-count]
+  (debugf "create-nodes %s nodes %s" node-count group-spec)
   (->> (for [i (range node-count)
                :let [node (create-node
                            compute-service host-node host-user
