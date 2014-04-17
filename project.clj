@@ -4,5 +4,5 @@
   :license {:name "Eclipse Public License"
             :url "http://www.eclipse.org/legal/epl-v10.html"}
   :dependencies [[org.clojure/clojure "1.4.0"]
-                 [com.palletops/pallet "0.8.0-RC.1"]
-                 [com.palletops/docker-crate "0.8.0-alpha.1"]])
+                 [com.palletops/pallet "0.8.0-SNAPSHOT"]
+                 [com.palletops/docker-crate "0.8.0-alpha.2"]])
