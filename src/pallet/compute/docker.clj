@@ -31,6 +31,7 @@ http://docker.io"
    [pallet.compute.docker.protocols :refer :all]
    [pallet.compute.docker.tagfile :as tagfile]
    [pallet.compute.implementation :as implementation]
+   [pallet.compute.protocols :as protocols]
    [pallet.compute.jvm :as jvm]
    [pallet.core.api :refer [set-state-for-node state-tag-name]]
    [pallet.crate.docker :as docker]
@@ -58,7 +59,7 @@ http://docker.io"
 
   (primary-ip
     [_]
-    (-> inspect :NetworkSettings :IpAddress))
+    (-> inspect :NetworkSettings :IPAddress))
 
   (private-ip [_] nil)
 
@@ -76,13 +77,17 @@ http://docker.io"
 
   (os-family
     [node]
-    (:os-family ((.image_meta (node/compute-service node))
-                 (inspect :Image))))
+    (or (if-let [image (node/tag node :pallet/image)]
+          (:os-family image))
+        (if-let [m (.image_meta (node/compute-service node))]
+          (:os-family (get m (inspect :Image))))))
 
   (os-version
     [node]
-    (:os-version ((.image_meta (node/compute-service node))
-                  (inspect :Image))))
+    (or (if-let [image (node/tag node :pallet/image)]
+          (:os-version image))
+        (if-let [m (.image_meta (node/compute-service node))]
+          (:os-version (get m (inspect :Image))))))
 
   (running?
     [_]
@@ -95,7 +100,11 @@ http://docker.io"
   (compute-service [_] service)
   pallet.node.NodePackager
   (packager [node]
-    nil)
+    (or (if-let [image (node/tag node :pallet/image)]
+          (:packager image))
+        (if-let [m (.image_meta (node/compute-service node))]
+          (:packager (get m (inspect :Image))))))
+
   pallet.node.NodeHardware
   (hardware [node]
     nil)
@@ -103,6 +112,9 @@ http://docker.io"
   (image-user [node]
     (debugf "image-user for %s" (inspect :Image))
     (or
+     (if-let [image (node/tag node :pallet/image)]
+       {:username (:login-user image)
+        :private-key (:login-private-key image)})
      (select-keys
       ((.image_meta (node/compute-service node))
        (inspect :Image))
@@ -113,10 +125,7 @@ http://docker.io"
                     "root"
                     u))}))
   pallet.node.NodeProxy
-  (proxy [node]
-      {:host (node/primary-ip (.host_node service))
-       :port (if-let [p (-> inspect :NetworkSettings :PortMapping :22)]
-               (if-not (blank? p) (Integer/parseInt p)))}))
+  (proxy [node] nil))
 
 (defn- nil-if-blank [x]
   (if (string/blank? x) nil x))
@@ -254,7 +263,13 @@ http://docker.io"
     {:provider :docker
      :node host-node
      :user host-user
-     :environment environment}))
+     :environment environment})
+
+  pallet.compute.protocols/JumpHosts
+  (jump-hosts [_]
+    [{:endpoint
+      {:server (node/node-address host-node)
+       :port (node/ssh-port host-node)}}]))
 
 ;;; ## Service Implementation
 (defn- host-command
@@ -288,6 +303,7 @@ http://docker.io"
   login, but I think this is only available on the ubuntu template. Passing
   a ssh public key for the default user seems to be more supported."
   [compute-service host-node host-user group-name image-id ports bootstrapped
+   image
    cmd options]
   (let [options (merge {:detached true
                         :port (or ports [22])}
@@ -300,6 +316,7 @@ http://docker.io"
     (when (zero? exit)
       (let [node (DockerNode. out group-name compute-service)]
         (node/tag! node :pallet/group-name group-name)
+        (node/tag! node :pallet/image image)
         (when bootstrapped
           (set-state-for-node :bootstrapped {:node node}))
         node))))
@@ -314,6 +331,7 @@ http://docker.io"
                            (-> group-spec :image :image-id)
                            (-> group-spec :network :inbound-ports)
                            (-> group-spec :image :bootstrapped)
+                           (-> group-spec :image)
                            cmd options)]]
          node)
        (filterv identity)))
