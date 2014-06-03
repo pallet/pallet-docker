@@ -4,19 +4,19 @@
    [clojure.string :refer [blank?]]
    [clojure.tools.logging :refer [debugf]]
    [clojure.test :refer :all]
-   [pallet.action :refer [with-action-options]]
+   [pallet.action-options :refer [with-action-options]]
    [pallet.actions :refer [exec-checked-script exec-script package
-                           package-manager remote-file remote-file-content
-                           with-action-values]]
-   [pallet.api :refer [converge group-spec node-spec plan-fn]]
-   [pallet.compute :refer [destroy-node instantiate-provider nodes]]
+                           package-manager remote-file remote-file-content]]
+   [pallet.compute :refer [instantiate-provider node-spec nodes]]
    [pallet.compute.docker :refer [create-image]]
-   [pallet.core.api :refer [phase-errors]]
+   ;; [pallet.core.api :refer [phase-errors]]
    [pallet.core.plan-state :as plan-state]
-   [pallet.crate :refer [target-node]]
+   ;; [pallet.crate :refer [target-node]]
    [pallet.crate.automated-admin-user :as automated-admin-user]
    [pallet.crate.docker :as docker]
+   [pallet.group :refer [converge group-spec phase-errors]]
    [pallet.node :as node]
+   [pallet.plan :refer [plan-fn]]
    [pallet.script.lib :refer [download-file]]))
 
 ;;; # Docker Host Node
@@ -24,18 +24,23 @@
 ;;; #  Container
 (def image-group
   (group-spec :image
-    :phases {:configure (plan-fn
-                          (package-manager :universe)
-                          (package-manager :update)
-                          (package "nginx-light")
-                          (remote-file "/usr/share/nginx/www/abc"
-                                       :content "abc")
-                          (exec-checked-script
-                           "Update nginx config"
-                           ("cat" ">>" "/etc/nginx/nginx.conf"
-                            "<< EOF\nmaster_process off;\ndaemon off;\nEOF")))}
-    :node-spec (node-spec :image {:image-id "pallet/ubuntu2"
-                                  :bootstrapped true})))
+    {:phases {:configure (plan-fn [session]
+                           (package-manager session :universe)
+                           (package-manager session :update)
+                           (package session "nginx-light")
+                           (remote-file session
+                                        "/usr/share/nginx/www/abc"
+                                        {:content "abc"})
+                           (exec-checked-script
+                            session
+                            "Update nginx config"
+                            ("cat" ">>" "/etc/nginx/nginx.conf"
+                             "<< EOF\nmaster_process off;\ndaemon off;\nEOF")))}
+     :node-spec (node-spec {:image {:image-id "pallet/ubuntu2"
+                                    :os-family :ubuntu
+                                    :os-version "13.10"
+                                    :packager :apt
+                                    :bootstrapped true}})}))
 
 (defn image-container
   "Function to return the image-id of a docker image that has
@@ -104,7 +109,7 @@
     :extends [automated-admin-user/with-automated-admin-user
               (docker/server-spec {})]
     :phases
-    {:test (plan-fn
+    {:test (plan-fn [session]
              (let [docker (instantiate-provider :docker :node (target-node))]
                (is (zero? (count (nodes docker))))
                (let [[image-id port] (image-container docker)

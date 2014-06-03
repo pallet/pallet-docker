@@ -16,116 +16,139 @@ Links
 -----
 
 http://docker.io"
+  (:refer-clojure :exclude [proxy])
   (:require
+   [clojure.core.async :refer [<! chan]]
    [clojure.java.io :as io]
    [clojure.string :as string :refer [blank? split trim]]
-   [clojure.tools.logging :as logging :refer [debugf tracef]]
-   [pallet.action-plan :as action-plan]
-   [pallet.actions :refer [as-action]]
-   [pallet.api :refer [lift-nodes plan-fn]]
-   [pallet.core.api-impl :refer [with-script-for-node]]
-   [pallet.crate :refer [get-settings]]
+   [clojure.tools.logging :as logging :refer [debugf tracef warnf]]
    [pallet.blobstore :as blobstore]
    [pallet.common.filesystem :as filesystem]
    [pallet.compute :as compute]
-   [pallet.compute.docker.protocols :refer :all]
+   [pallet.compute.docker.protocols :as impl
+    :refer [ServiceHost TagCache ImageStore ImageRepository]]
    [pallet.compute.docker.tagfile :as tagfile]
    [pallet.compute.implementation :as implementation]
    [pallet.compute.protocols :as protocols]
    [pallet.compute.jvm :as jvm]
-   [pallet.core.api :refer [set-state-for-node state-tag-name]]
+   [pallet.core.context :refer [with-domain]]
+   [pallet.core.plan-state.in-memory :refer [in-memory-plan-state]]
    [pallet.crate.docker :as docker]
+   [pallet.docker.execute :refer [docker-exec]]
+   [pallet.docker.executor :refer [docker-executor]]
+   [pallet.docker.file-upload :refer [docker-upload]]
    [pallet.environment :as environment]
-   [pallet.execute :as execute]
-   [pallet.futures :as futures]
    [pallet.node :as node]
+   [pallet.plan :refer [execute-plan plan-fn]]
    [pallet.script :as script]
+   [pallet.session :as session]
+   [pallet.settings :refer [get-settings]]
    [pallet.stevedore :as stevedore :refer [script with-script-language]]
-   [pallet.utils :as utils])
+   [pallet.tag :refer [set-state-flag]]
+   [pallet.utils :as utils :refer [maybe-assoc]]
+   [pallet.utils.async :refer [from-chan go-try]])
   (:use
-   [pallet.compute.node-list :only [make-node]]
    [pallet.script :only [with-script-context]]
    [pallet.script.lib :only [sed-file]]
-   [pallet.core.user :only [*admin-user*]]))
+   [pallet.user :only [*admin-user*]]))
 
 
+;;; ### Tags
 
+;;; Tagging is used to keep track of various things pallet needs to
+;;; know about a server, like its os-fmaily.
 
-(deftype DockerNode
-    [inspect group-name service]
-  pallet.node/Node
+(def pallet-name-tag :pallet-name)
+(def pallet-image-tag :pallet-image)
+(def pallet-state-tag :pallet-state)
 
-  (ssh-port [_] 22)
+;;; # Protocol API wrappers
+(defn create-image
+  [compute-service node options]
+  (impl/create-image compute-service node options))
 
-  (primary-ip
-    [_]
-    (-> inspect :NetworkSettings :IPAddress))
+(defn tag-cache
+  [compute-service]
+  (impl/tag-cache compute-service))
 
-  (private-ip [_] nil)
+;;; # Service Implementation
+(defn ssh-port [_] 22)
 
-  (is-64bit?
-    [_]
-    true)
+(defn primary-ip
+ [inspect]
+ (-> inspect :NetworkSettings :IPAddress))
 
-  (group-name
-    [_]
-    (or group-name "unknown"))
+(defn private-ip
+ [_]
+ nil)
 
-  (hostname
-    [_]
-    (-> inspect :Config :Hostname))
+(defn is-64bit?
+ [_]
+ true)
 
-  (os-family
-    [node]
-    (or (if-let [image (node/tag node :pallet/image)]
-          (:os-family image))
-        (if-let [m (.image_meta (node/compute-service node))]
-          (:os-family (get m (inspect :Image))))))
+(defn os-family
+  [inspect node]
+  (or (if-let [image (protocols/node-tag
+                      (:compute-service node) node pallet-image-tag)]
+        (:os-family image))
+      (if-let [m (.image_meta (:compute-service node))]
+        (:os-family (get m (inspect :Image))))))
 
-  (os-version
-    [node]
-    (or (if-let [image (node/tag node :pallet/image)]
-          (:os-version image))
-        (if-let [m (.image_meta (node/compute-service node))]
-          (:os-version (get m (inspect :Image))))))
+(defn os-version
+  [inspect node]
+  (or (if-let [image (protocols/node-tag
+                      (:compute-service node) node pallet-image-tag)]
+        (:os-version image))
+      (if-let [m (.image_meta (:compute-service node))]
+        (:os-version (get m (inspect :Image))))))
 
-  (running?
-    [_]
-    (-> inspect :State :Running))
+(defn run-state
+ [inspect]
+ (let [state (-> inspect :State)]
+   (if (:Running state)
+     :running
+     :terminated)))
 
-  (terminated? [_]
-    (not (-> inspect :State :Running)))
+(defn id
+  "Return the id for a node from a docker response."
+  [inspect]
+  (or (-> inspect :Id)
+      (-> inspect :ID)))
 
-  (id [_] (-> inspect :ID))
-  (compute-service [_] service)
-  pallet.node.NodePackager
-  (packager [node]
-    (or (if-let [image (node/tag node :pallet/image)]
-          (:packager image))
-        (if-let [m (.image_meta (node/compute-service node))]
-          (:packager (get m (inspect :Image))))))
+(defn hostname
+ [inspect]
+ (or (first (:Names inspect))
+     (-> inspect :Config :Hostname)
+     (id inspect)))
 
-  pallet.node.NodeHardware
-  (hardware [node]
-    nil)
-  pallet.node.NodeImage
-  (image-user [node]
-    (debugf "image-user for %s" (inspect :Image))
-    (or
-     (if-let [image (node/tag node :pallet/image)]
-       {:username (:login-user image)
-        :private-key (:login-private-key image)})
-     (select-keys
-      ((.image_meta (node/compute-service node))
-       (inspect :Image))
-      [:username :password :private-key :public-key
-       :private-key-path :public-key-path])
-     {:username (let [u (-> inspect :Config :User)]
-                  (if (blank? u)
-                    "root"
-                    u))}))
-  pallet.node.NodeProxy
-  (proxy [node] nil))
+(defn packager [inspect node]
+  (or (if-let [image (protocols/node-tag
+                      (:compute-service node) node pallet-image-tag)]
+        (:packager image))
+      (if-let [m (.image_meta (:compute-service node))]
+        (:packager (get m (inspect :Image))))))
+
+(defn hardware [node]
+  {})
+
+(defn image-user [inspect node]
+  (debugf "image-user for %s" (inspect :Image))
+  (or
+   (if-let [image (protocols/node-tag
+                   (:compute-service node) node pallet-image-tag)]
+     {:username (:login-user image)
+      :private-key (:login-private-key image)})
+   ;; (select-keys
+   ;;  ((.image_meta (:compute-service node))
+   ;;   (:Image inspect))
+   ;;  [:username :password :private-key :public-key
+   ;;   :private-key-path :public-key-path])
+   {:username (let [u (-> inspect :Config :User)]
+                (if (blank? u)
+                  "root"
+                  u))}))
+
+(defn proxy [node] nil)
 
 (defn- nil-if-blank [x]
   (if (string/blank? x) nil x))
@@ -161,111 +184,117 @@ http://docker.io"
 
 
 ;;; # Service
-(declare create-nodes)
+(declare create-nodes*)
 (declare remove-node)
 (declare nodes)
 (declare commit)
 
-(defprotocol ImageStore
-  (create-image [compute-service node options])
-  (delete-image [compute-service image-id]))
-
-(defprotocol ImageRepository
-  (publish-image [compute-service image-id options])
-  (revoke-image [compute-service image-id options]))
 
 (deftype DockerService
     ;; host-node and host-user determine the node that is hosting the containers
-    [host-node host-user environment tag-provider tag-cache image-meta]
+    [host-node host-user port executor file-uploader
+     environment tag-provider tag-cache image-meta]
+
+  pallet.core.protocols/Closeable
+  (close [_])
 
   pallet.compute.docker.protocols/ServiceHost
   (host-node [_] host-node)
   (host-user [_] host-user)
+
   pallet.compute.docker.protocols/TagCache
   (tag-cache [compute-service] tag-cache)
-  pallet.compute/ComputeService
-  (nodes [compute-service]
-    (nodes compute-service host-node host-user))
 
-  (ensure-os-family [compute-service group-spec]
-    (->
-     group-spec
-     (update-in [:image :image-id] #(or % :ubuntu))
-     (update-in [:image :os-family] #(or % :ubuntu)))
-    group-spec)
+  protocols/ComputeService
+  (nodes [compute-service ch]
+    (with-domain :docker
+      (go-try ch
+        (>! ch {:targets
+                (nodes compute-service executor host-node host-user port)}))))
 
-  (run-nodes
-    [compute-service group-spec node-count user init-script options]
-    (let [nodes (compute/nodes compute-service)
-          group-name (:group-name group-spec)
-          current-nodes (filter #(= group-name (node/group-name %)) nodes)]
-      (create-nodes
-       compute-service host-node host-user
-       group-spec
-       (or (-> group-spec :image :init) "/usr/sbin/sshd -D")
-       options
-       node-count)))
+  protocols/ComputeServiceNodeCreateDestroy
 
-  (reboot
-    [compute nodes]
-    )
+  (images [_ ch]
+    (with-domain :docker
+      (go-try ch
+        (>! ch {:images []}))))
 
-  (boot-if-down
-    [compute nodes]
-    )
+  (create-nodes
+    [service node-spec user node-count {:keys [node-name] :as options} ch]
+    (when-not (every? (:image node-spec) [:os-family :os-version :login-user])
+      (throw
+       (ex-info
+        "node-spec :image must contain :os-family :os-version :login-user keys"
+        {:supplied (select-keys (:image node-spec)
+                                [:os-family :os-version :login-user])})))
+    (with-domain :docker
+      (go-try ch
+        (let [c (chan)
+              nodes (do
+                      (compute/nodes service c)
+                      (:targets (<! c)))
+              current-nodes nodes
+              ;; (filter #(= node-name (node/-name %)) nodes)
+              ]
+          (>! ch {:new-targets
+                  (create-nodes*
+                   service executor host-node host-user
+                   node-spec
+                   (or (-> node-spec :image :init)
+                       "/bin/bash"
+                       ;; "/usr/sbin/sshd -D"
+                       )
+                   options
+                   node-count)})))))
 
-  (shutdown-node
-    [compute node _]
-    ;; todo: wait for completion
-    (debugf "Shutting down %s" (pr-str node))
-    )
+  (destroy-nodes [service nodes ch]
+    (with-domain :docker
+      (go-try ch
+        (doseq [n nodes]
+          (remove-node service host-node host-user n))
+        (>! ch {:old-targets nodes}))))
 
-  (shutdown
-    [compute nodes user]
-    )
+  ;; protocols/ComputeServiceNodeStop
+  ;; (stop-nodes
+  ;;   [compute nodes ch]
+  ;;   (with-domain :docker
+  ;;     (>! ch {})))
 
-  (destroy-nodes-in-group
-    [compute group-name]
-    (debugf "destroy-nodes-in-group %s" group-name)
-    (let [nodes (compute/nodes compute)]
-      (doseq [n nodes
-              :when (= (name group-name) (name (node/group-name n)))]
-        (compute/destroy-node compute n))))
+  ;; (restart-nodes
+  ;;   [compute nodes ch]
+  ;;   (with-domain :ec2
+  ;;     (>! ch {})))
 
-  (destroy-node
-    [compute node]
-    {:pre [node]}
-    (remove-node compute host-node host-user node))
 
-  (images [compute]
-    )
-
-  (close [compute])
-  pallet.environment.Environment
+  pallet.environment.protocols.Environment
   (environment [_] environment)
+
   ImageStore
   (create-image [compute-service node options]
     (commit compute-service host-node host-user node options))
-  pallet.compute.NodeTagReader
+
+  protocols/NodeTagReader
   (node-tag [compute node tag-name]
-    (compute/node-tag @tag-provider node tag-name))
+    (pallet.compute.protocols/node-tag @tag-provider node tag-name))
   (node-tag [compute node tag-name default-value]
-    (compute/node-tag @tag-provider node tag-name default-value))
+    (pallet.compute.protocols/node-tag @tag-provider node tag-name default-value))
   (node-tags [compute node]
-    (compute/node-tags @tag-provider node))
-  pallet.compute.NodeTagWriter
+    (pallet.compute.protocols/node-tags @tag-provider node))
+
+  protocols/NodeTagWriter
   (tag-node! [compute node tag-name value]
-    (compute/tag-node! @tag-provider node tag-name value))
+    (pallet.compute.protocols/tag-node! @tag-provider node tag-name value))
   (node-taggable? [compute node]
-    (compute/node-taggable? @tag-provider node))
-  pallet.compute.ComputeServiceProperties
+    (pallet.compute.protocols/node-taggable? @tag-provider node))
+
+  protocols/ComputeServiceProperties
   (service-properties [_]
     {:provider :docker
      :node host-node
      :user host-user
      :environment environment})
 
-  pallet.compute.protocols/JumpHosts
+  protocols/JumpHosts
   (jump-hosts [_]
     [{:endpoint
       {:server (node/node-address host-node)
@@ -273,24 +302,74 @@ http://docker.io"
 
 ;;; ## Service Implementation
 (defn- host-command
-  [compute-service host-node host-user & plan-fns]
-  (let [{:keys [results]}
-        (lift-nodes
-         [{:node host-node}] plan-fns :user host-user
-         :plan-state
-         {:host
-          {(node/id host-node)
-           {:docker/tags
-            {nil
-             @(tag-cache compute-service)}}}})]
+  [compute-service host-node host-user plan-fn]
+  {:pre [host-node host-user]}
+  (let [session (session/create
+                 {:user host-user
+                  :plan-state (in-memory-plan-state
+                               {:host
+                                {(:id host-node)
+                                 {:docker/tags
+                                  {nil
+                                   @(tag-cache compute-service)}}}})
+                  :executor (docker-executor)
+                  :action-options {:file-uploader (docker-upload {})}})
+        {:keys [results]} (execute-plan
+                           session
+                           host-node
+                           plan-fn)]
     (-> results last :result last)))
+
+(defn- container-command
+  [compute-service node user plan-fn]
+  {:pre [node user]}
+  (let [node (merge {:os-family :ubuntu :os-version "13.10" :packager :apt}
+                    node)
+        session (session/create
+                 {:user user
+                  :plan-state (in-memory-plan-state
+                               {:host
+                                {(:id node)
+                                 {:docker/tags
+                                  {nil
+                                   @(tag-cache compute-service)}}}})
+                  :executor (docker-executor)
+                  :action-options {:file-uploader (docker-upload {})}})
+        {:keys [action-results] :as result} (execute-plan
+                                             session
+                                             node
+                                             plan-fn)]
+    (debugf "result %s" (pr-str result))
+    (last action-results)))
 
 (defn- script-output
   [result]
+  (debugf "script-output %s" (pr-str result))
   (let [{:keys [error exit out]} result]
     (when-not (zero? exit)
       (throw (ex-info "Command failed" result)))
     out))
+
+(defn- node-map [inspect node-name compute]
+  {:pre [compute inspect]}
+  (debugf "node-map %s" (pr-str inspect))
+  (as-> {:id (id inspect)
+         :primary-ip (primary-ip inspect)
+         :hostname (hostname inspect)
+         :run-state (run-state inspect)
+         :ssh-port 22
+         :hardware (hardware inspect)
+         :compute-service compute
+         :provider-data {:host-node (.host_node compute)
+                         :host-user (.host_user compute)}}
+        n
+        (merge
+         {:os-family (os-family inspect n)
+          :os-version (os-version inspect n)
+          :packager (packager inspect n)
+          :image-user (image-user inspect n)}
+         n)
+        (maybe-assoc n :proxy (proxy inspect))))
 
 (defn- create-node
   "Instantiates a compute node on docker and runs the supplied init script.
@@ -302,31 +381,59 @@ http://docker.io"
   We would like to bind mount the admin user so we have known credentials to
   login, but I think this is only available on the ubuntu template. Passing
   a ssh public key for the default user seems to be more supported."
-  [compute-service host-node host-user group-name image-id ports bootstrapped
-   image
-   cmd options]
+  [compute-service executor host-node host-user group-name image-id ports
+   bootstrapped image cmd options]
   (let [options (merge {:detached true
                         :port (or ports [22])}
                        options)
-        {:keys [results]}
-        (lift-nodes [{:node host-node}]
-                    [(plan-fn (docker/run image-id cmd options))]
-                    :user host-user)
-        {:keys [error exit out]} (-> results last :result last)]
-    (when (zero? exit)
-      (let [node (DockerNode. out group-name compute-service)]
-        (node/tag! node :pallet/group-name group-name)
-        (node/tag! node :pallet/image image)
-        (when bootstrapped
-          (set-state-for-node :bootstrapped {:node node}))
-        node))))
 
-(defn create-nodes
-  [compute-service host-node host-user group-spec cmd options node-count]
+
+        {:keys [status body] :as r} (docker-exec
+                                     (.transport executor)
+                                     host-node host-user
+                                     {:command :container-create
+                                      :Image image-id
+                                      :Cmd [cmd]
+                                      :AttachStdout false
+                                      :AttachStderr false
+                                      :AttachStdin false
+                                      :OpenStdin true})]
+    (debugf "create-node create %s" (pr-str r))
+    (if (= 201 status)
+      (let [id (:Id body)
+            {:keys [status body] :as r} (docker-exec
+                                         (.transport executor)
+                                         host-node host-user
+                                         {:command :container-start
+                                          :id id})]
+        (debugf "create-node start %s" (pr-str r))
+        (if (= 204 status)
+          (let [{:keys [status body] :as r}
+                (docker-exec
+                 (.transport executor)
+                 host-node host-user
+                 {:command :container
+                  :id id})
+                node (assoc (node-map body group-name compute-service)
+                       :os-family (:os-family image)
+                       :os-version (:os-version image)
+                       :packager (:packager image)
+                       :image-user {:username (:login-user image)})]
+            (node/tag! node :pallet/group-name group-name)
+            (node/tag! node pallet-image-tag image)
+            (when bootstrapped
+              (set-state-flag node :bootstrapped))
+            node)
+          (warnf "create-node start failed %s" (pr-str r))))
+      (warnf "create-node create failed %s" (pr-str r)))))
+
+(defn create-nodes*
+  [compute-service executor host-node host-user group-spec cmd options
+   node-count]
   (debugf "create-nodes %s nodes %s" node-count group-spec)
   (->> (for [i (range node-count)
                :let [node (create-node
-                           compute-service host-node host-user
+                           compute-service executor host-node host-user
                            (:group-name group-spec)
                            (-> group-spec :image :image-id)
                            (-> group-spec :network :inbound-ports)
@@ -341,40 +448,65 @@ http://docker.io"
   [compute-service host-node host-user node]
   (debugf "remove-node %s" node)
   (let [{:keys [results]}
-        (lift-nodes [{:node host-node}]
-                    [(plan-fn (docker/kill (node/id node)))]
-                    :user host-user)
+        (execute-plan
+         (session/create {:user host-user})
+         {:node host-node}
+         (plan-fn [session] (docker/kill session (node/id node))))
         {:keys [error exit out]} (-> results last :result last)]
     (when-not (zero? exit)
       (throw (ex-info (str "Removing " (node/id node) " failed"))))))
 
+
+(defn image-tag
+  "Return the image tag for a group"
+  [group-spec]
+  (pr-str (-> group-spec
+              :image
+              (select-keys
+               [:image-id :os-family :os-version :os-64-bit
+                :login-user :packager]))))
+
+(defn set-node-tags
+  "Update the tags on a node to match the given group-spec image and
+  node-state."
+  [compute node group-spec node-state]
+  (protocols/tag-node! compute node
+                       pallet-image-tag (image-tag group-spec))
+  ;; (protocols/tag-node! compute node
+  ;;                      pallet-state-tag (pr-str node-state))
+  )
+
 (defn nodes
-  [compute host-node host-user]
-  (let [{:keys [results]}
-        (lift-nodes [{:node host-node}]
-                    [(plan-fn (docker/nodes))]
-                    :user host-user)
-        {:keys [error exit out]} (-> results last :result last)
+  "Return a sequence of node maps."
+  [compute executor host-node host-user port]
+  (let [{:keys [body]} (docker-exec
+                        (.transport executor)
+                        host-node host-user {:command :containers})
         inspect->node (fn [inspect]
                         (tracef "building node for %s" inspect)
-                        (let [node (DockerNode. inspect nil compute)
-                              group-name (node/tag node :pallet/group-name)]
+                        (let [node (node-map inspect nil compute)
+                              _ (debugf "node %s" (pr-str node))
+                              group-name (if (node/node? node)
+                                           (protocols/node-tag
+                                            compute node :pallet/group-name))]
                           (tracef
                            "group-name for %s %s" (:Id inspect) group-name)
-                          (DockerNode. inspect group-name compute)))]
-    (when-let [e (:cause error)]
-      (clojure.stacktrace/print-stack-trace e))
-    (tracef "results %s" (vec results))
-    (when (zero? exit)
-      (map inspect->node out))))
+                          (node-map inspect group-name compute)))]
+    ;; (when-let [e (:cause error)]
+    ;;   (clojure.stacktrace/print-stack-trace e))
+    (tracef "body %s" body)
+    (debugf "body %s" body)
+    (map inspect->node body)))
 
 (defn commit
   [compute host-node host-user node options]
   {:pre [compute host-node host-user node]}
   (let [{:keys [results]}
-        (lift-nodes [{:node host-node}]
-                    [(plan-fn (docker/commit (pallet.node/id node) options))]
-                    :user host-user)
+        (execute-plan
+         (session/create {:user host-user})
+         {:node host-node}
+         (plan-fn [session]
+           (docker/commit session (pallet.node/id node) options)))
         {:keys [error exit out]} (-> results last :result last)]
     (when-let [e (:cause error)]
       (clojure.stacktrace/print-stack-trace e))
@@ -385,61 +517,68 @@ http://docker.io"
                       {:node (pallet.node/id node)})))))
 
 (defn ensure-tags
-  [^DockerService service]
+  [^DockerService service node]
   (tracef "ensure-tags")
   (when-not @(tag-cache service)
-    (let [last-cmd (host-command
-                    service (host-node service) (host-user service)
-                    (plan-fn
-                      (tagfile/read-tags)))]
+    (let [;; host-node (.host_node service)
+          ;; host-user (.host_user service)
+          last-cmd (container-command
+                    service node pallet.user/*admin-user* ; host-node host-user
+                    (plan-fn [session] (tagfile/read-tags session)))]
+      (debugf "ensure-tags %s" last-cmd)
       (reset!
        (tag-cache service)
        (dissoc last-cmd :action-symbol :context))))
   (tracef "ensure-tags %s" @(tag-cache service)))
 
 (defn- set-host-tag
-  [compute-service host-node host-user node-id tag value]
+  [compute-service node user node-id tag value]
   (swap! (tag-cache compute-service)
          assoc-in [node-id (keyword tag)] value)
   (script-output
-   (host-command compute-service host-node host-user
-                 (plan-fn
+   (container-command compute-service node user
+                 (plan-fn [session]
                    (tracef
                     "set-host-tag existing tags %s"
-                    (get-settings :docker/tags))
-                   (tagfile/set-tag node-id tag value)))))
+                    (get-settings session :docker/tags))
+                   (tagfile/set-tag session node-id tag value)))))
 
 
 (deftype TagfileNodeTag [^DockerService service]
-  pallet.compute.NodeTagReader
+  protocols/NodeTagReader
   (node-tag [_ node tag-name]
-    (ensure-tags service)
-    (get-in @(tag-cache service) [(node/id node) (keyword tag-name)]))
+    (ensure-tags service node)
+    (get-in @(tag-cache service) [(:id node) (keyword tag-name)]))
   (node-tag [_ node tag-name default-value]
-    (ensure-tags service)
-    (get-in @(tag-cache service) [(node/id node) (keyword tag-name)]
+    (ensure-tags service node)
+    (get-in @(tag-cache service) [(:id node) (keyword tag-name)]
             default-value))
   (node-tags [_ node]
-    (ensure-tags service)
-    (get @(tag-cache service) (node/id node)))
-  pallet.compute.NodeTagWriter
+    (ensure-tags service node)
+    (get @(tag-cache service) (:id node)))
+  protocols/NodeTagWriter
   (tag-node! [_ node tag-name value]
-    (ensure-tags service)
-    (set-host-tag service (host-node service) (host-user service)
-                  (node/id node) (keyword tag-name) value))
+    (ensure-tags service node)
+    (set-host-tag service node pallet.user/*admin-user*
+                  (:id node) (keyword tag-name) value))
   (node-taggable? [_ node] true))
+
 
 ;;;; Compute service SPI
 (defn supported-providers []
   ["docker"])
 
 (defn docker-service
-  [{:keys [node user environment tag-provider image-meta]
+  [{:keys [node user port environment tag-provider image-meta]
     :or {user *admin-user*}
     :as options}]
   (let [tag-provider (atom tag-provider)
+        executor (docker-executor)
+        file-uploader (docker-upload {})
         service (DockerService.
-                 node user environment tag-provider (atom nil) image-meta)]
+                 node user port
+                 executor file-uploader
+                 environment tag-provider (atom nil) image-meta)]
     (when-not @tag-provider
       (reset! tag-provider (TagfileNodeTag. service)))
     service))
@@ -448,8 +587,6 @@ http://docker.io"
   [_ {:keys [node user environment]
       :as options}]
   (docker-service options))
-
-
 
 ;;; TODO
 ;;; check host support for docker with docker-checkconfig
