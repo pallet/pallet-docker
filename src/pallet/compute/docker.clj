@@ -22,6 +22,7 @@ http://docker.io"
    [clojure.java.io :as io]
    [clojure.string :as string :refer [blank? split trim]]
    [clojure.tools.logging :as logging :refer [debugf tracef warnf]]
+   [com.palletops.docker :as docker-api]
    [pallet.blobstore :as blobstore]
    [pallet.common.filesystem :as filesystem]
    [pallet.compute :as compute]
@@ -136,8 +137,9 @@ http://docker.io"
   (or
    (if-let [image (protocols/node-tag
                    (:compute-service node) node pallet-image-tag)]
-     {:username (:login-user image)
-      :private-key (:login-private-key image)})
+     (if (:login-user image)
+       (-> {:username (:login-user image)}
+           (maybe-assoc :private-key (:login-private-key image)))))
    ;; (select-keys
    ;;  ((.image_meta (:compute-service node))
    ;;   (:Image inspect))
@@ -271,7 +273,7 @@ http://docker.io"
 
   ImageStore
   (create-image [compute-service node options]
-    (commit compute-service host-node host-user node options))
+    (commit compute-service executor host-node host-user node options))
 
   protocols/NodeTagReader
   (node-tag [compute node tag-name]
@@ -360,6 +362,7 @@ http://docker.io"
          :ssh-port 22
          :hardware (hardware inspect)
          :compute-service compute
+         :action-options {:executor (.executor compute)}
          :provider-data {:host-node (.host_node compute)
                          :host-user (.host_user compute)}}
         n
@@ -383,11 +386,18 @@ http://docker.io"
   a ssh public key for the default user seems to be more supported."
   [compute-service executor host-node host-user group-name image-id ports
    bootstrapped image cmd options]
+
+  (let [{:keys [status body] :as r} (docker-exec
+                                     (.transport executor)
+                                     host-node host-user
+                                     {:command :image-create
+                                      :fromImage image-id
+                                      :registry "https://index.docker.io/"})]
+    (debugf "Image pull %s" (pr-str r)))
+
   (let [options (merge {:detached true
                         :port (or ports [22])}
                        options)
-
-
         {:keys [status body] :as r} (docker-exec
                                      (.transport executor)
                                      host-node host-user
@@ -499,22 +509,23 @@ http://docker.io"
     (map inspect->node body)))
 
 (defn commit
-  [compute host-node host-user node options]
+  [compute executor host-node host-user node options]
   {:pre [compute host-node host-user node]}
-  (let [{:keys [results]}
-        (execute-plan
-         (session/create {:user host-user})
-         {:node host-node}
-         (plan-fn [session]
-           (docker/commit session (pallet.node/id node) options)))
-        {:keys [error exit out]} (-> results last :result last)]
-    (when-let [e (:cause error)]
-      (clojure.stacktrace/print-stack-trace e))
-    (tracef "results %s" (vec results))
-    (if (zero? exit)
-      (trim out)
-      (throw (ex-info (str "Commit image " (pallet.node/id node) " failed")
-                      {:node (pallet.node/id node)})))))
+  (let [{:keys [body] :as r} (docker-exec
+                              (.transport executor)
+                              host-node host-user
+                              (docker-api/commit-map
+                               (merge
+                                {:container (node/id node)}
+                                options)))]
+    ;; (when-let [e (:cause error)]
+    ;;   (clojure.stacktrace/print-stack-trace e))
+    (debugf "commit results %s" (pr-str r))
+    ;; (if (zero? exit)
+    ;;   (trim out)
+    ;;   (throw (ex-info (str "Commit image " (pallet.node/id node) " failed")
+    ;;                   {:node (pallet.node/id node)})))
+    body))
 
 (defn ensure-tags
   [^DockerService service node]
